@@ -3,20 +3,17 @@
 import logging
 import sys, os
 
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[0] = project_root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import LOG_FORMAT, LOG_LEVEL
 from simulator.elo import ELOEngine
 from simulator.monte_carlo import MonteCarloSimulator
-from tournament.groups import GroupStage
-from tournament.simulator import world_cup_groups
 
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
-# Round names for a 48-team WC (24 advance → 5 knockout rounds)
+# Round names by number of teams entering that round (FIFA 2026: 32-team bracket)
 ROUND_NAMES = {
-    24: "Round of 32",       # 24 → 12  (actually named R32 with byes in 2026)
+    32: "Round of 32",
     16: "Round of 16",
     8:  "Quarter Finals",
     4:  "Semi Finals",
@@ -54,38 +51,68 @@ class KnockoutStage:
 
     # ── Bracket Construction ──────────────────────────────────────────────────
 
-    def build_bracket(self, qualified: dict) -> list:
+    def build_bracket(self, qualified: dict, best_thirds: list = None) -> list:
         """
-        Build a seeded knockout bracket from group stage qualifiers.
+        Build a seeded 32-team knockout bracket from group stage results.
 
-        FIFA 2026 pairing: 1A vs 2C, 1B vs 2D, etc. (simplified here as
-        alternating 1st/2nd place across groups).
+        FIFA 2026 format: 12 groups × top-2 = 24 direct qualifiers,
+        plus the 8 best 3rd-placed teams = 32 teams total.
+
+        Group winners are seeded against either a runner-up or a
+        best-third team (never against another group winner in R32),
+        mirroring how FIFA seeds the actual bracket.
 
         Args:
             qualified: {group_name: [1st_place, 2nd_place]}
+            best_thirds: list of the 8 best 3rd-placed teams (or None/[]
+                         for an 8-group/16-team format with no thirds)
 
         Returns:
-            Ordered list of teams for round-of-32 matchups
+            Ordered list of teams for round-of-32 (or round-of-16) matchups,
+            paired as [0v1, 2v3, 4v5, ...]. Every input team appears exactly
+            once — none are ever dropped.
         """
+        best_thirds = best_thirds or []
         group_names = sorted(qualified.keys())
-        winners = [qualified[g][0] for g in group_names]   # All group winners
-        runners_up = [qualified[g][1] for g in group_names] # All runners-up
+        winners = [qualified[g][0] for g in group_names]
+        runners_up = [qualified[g][1] for g in group_names]
 
-        if self.seeding == "group_order":
-            # Pair 1st of group A vs 2nd of group B, etc. (cross-group)
-            bracket = []
-            n = len(group_names)
-            for i in range(n):
-                bracket.append(winners[i])
-                bracket.append(runners_up[(i + n // 2) % n])
-        else:
-            # Random seeding
-            import random
-            all_teams = winners + runners_up
-            random.shuffle(all_teams)
-            bracket = all_teams
+        bracket_size = len(winners) + len(runners_up) + len(best_thirds)
+        if bracket_size > 0 and bracket_size & (bracket_size - 1) != 0:
+            logger.warning(
+                f"Bracket size {bracket_size} is not a power of 2 — "
+                f"check group_count / best_thirds configuration"
+            )
 
-        logger.info(f"Bracket built: {len(bracket)} teams, {len(bracket)//2} first-round matches")
+        # Pool of "second tier" opponents: runners-up + best thirds, shuffled
+        # so winners don't face a predictable pairing every simulation run.
+        # By design this pool is LARGER than `winners` whenever best_thirds
+        # is used (e.g. 12 winners vs 12 runners-up + 8 thirds = 20) — every
+        # winner still gets exactly one opponent; extra second-tier teams
+        # are paired against each other in the lines below.
+        import random
+        second_tier = runners_up + list(best_thirds)
+        random.shuffle(second_tier)
+
+        bracket = []
+        # Step 1: pair every group winner with one second-tier opponent
+        for i, winner in enumerate(winners):
+            bracket.append(winner)
+            bracket.append(second_tier[i])
+
+        # Step 2: any remaining second-tier teams (the "extra" runners-up/
+        # thirds beyond what winners can cover) are paired against each
+        # other, two at a time — nobody is dropped.
+        leftover = second_tier[len(winners):]
+        bracket.extend(leftover)
+
+        if len(bracket) != bracket_size:
+            logger.warning(
+                f"Bracket built with {len(bracket)} teams but expected "
+                f"{bracket_size} — check input data for duplicates/gaps"
+            )
+
+        logger.info(f"Bracket built: {len(bracket)} teams, {len(bracket) // 2} first-round matches")
         return bracket
 
     # ── Match Simulation ──────────────────────────────────────────────────────
@@ -212,6 +239,18 @@ class KnockoutStage:
 
         logger.info(f"Champion: {winner} | Runner-up: {runner_up} | 3rd: {third_place_team}")
 
+
+        all_matches = []
+        for rnd in all_rounds:
+            for m in rnd["matches"]:
+                m_with_round = dict(m)
+                m_with_round["round"] = rnd["round"]
+                all_matches.append(m_with_round)
+        if third_place_result:
+            tp_with_round = dict(third_place_result)
+            tp_with_round["round"] = "Third Place Play-off"
+            all_matches.append(tp_with_round)
+
         return {
             "rounds": all_rounds,
             "final": final_match,
@@ -219,33 +258,7 @@ class KnockoutStage:
             "winner": winner,
             "runner_up": runner_up,
             "third_place_team": third_place_team,
-        }
-
-    def simulate_from_groups(self, groups: dict, n_advance: int = 2) -> dict:
-        """
-        Simulate group stage qualifiers and then run the knockout stage.
-
-        Args:
-            groups: {group_name: [team1, team2, team3, team4]}
-            n_advance: Number of teams advancing from each group
-
-        Returns:
-            {
-                "group_stage": {
-                    "standings": ..., "qualified": ..., "all_qualified": ...
-                },
-                "knockout": { ... }
-            }
-        """
-        group_stage = GroupStage(groups, self.elo, self.mc)
-        group_results = group_stage.simulate_all_groups(n_advance=n_advance)
-        bracket_order = self.build_bracket(group_results["qualified"])
-        knockout_results = self.simulate_bracket(bracket_order)
-
-        return {
-            "group_stage": group_results,
-            "knockout": knockout_results,
-            "bracket_order": bracket_order,
+            "all_matches": all_matches,
         }
 
     # ── Display Helper ────────────────────────────────────────────────────────
@@ -283,27 +296,23 @@ class KnockoutStage:
 if __name__ == "__main__":
     from simulator.elo import ELOEngine
     from simulator.monte_carlo import MonteCarloSimulator
+    from tournament.groups import GroupStage
 
-    ratings = {
-        "Brazil": 2100, "Argentina": 2085, "France": 2070, "England": 2020,
-        "Spain": 2030, "Germany": 1995, "Portugal": 2010, "Netherlands": 1975,
-        "Belgium": 1965, "Italy": 1950, "Croatia": 1935, "Uruguay": 1945,
-        "Mexico": 1905, "USA": 1895, "Morocco": 1870, "Senegal": 1855,
-    }
-
+   
     elo = ELOEngine(ratings)
     mc = MonteCarloSimulator(elo, n_simulations=1)
+
+    # Full pipeline: simulate groups (with best-thirds) → build bracket → knockout
+    gs = GroupStage(groups, elo, mc)
+    group_results = gs.simulate_all_groups(n_advance=2, n_best_thirds=8)
+
+    print(f"24 direct qualifiers + {len(group_results['best_thirds'])} best thirds "
+          f"= {len(group_results['all_qualified'])} teams in knockout\n")
+
     ks = KnockoutStage(elo, mc)
-
-    print("Simulating group stage qualifiers from default 2026 groups...")
-    group_stage = GroupStage(world_cup_groups, elo, mc)
-    group_results = group_stage.simulate_all_groups()
-    qualified_groups = group_results["qualified"]
-
-    print("Qualified teams by group:")
-    for group_name, teams in qualified_groups.items():
-        print(f"  Group {group_name}: {teams[0]} (1st), {teams[1]} (2nd)")
-
-    bracket_order = ks.build_bracket(qualified_groups)
+    bracket_order = ks.build_bracket(
+        group_results["qualified"],
+        best_thirds=group_results["best_thirds"]
+    )
     result = ks.simulate_bracket(bracket_order)
     print(ks.format_bracket(result))

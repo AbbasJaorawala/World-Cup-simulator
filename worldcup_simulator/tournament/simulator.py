@@ -7,21 +7,26 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import (
-    WC_2026_TEAMS, NUM_GROUPS, TEAMS_PER_GROUP,
+    NUM_GROUPS, TEAMS_PER_GROUP, BEST_THIRD_PLACE_QUALIFIERS,
     WEIGHT_ELO, WEIGHT_FIFA_RANK, WEIGHT_RECENT_FORM, WEIGHT_HEAD_TO_HEAD,
     LOG_FORMAT, LOG_LEVEL
 )
 from simulator.elo import ELOEngine
 from simulator.monte_carlo import MonteCarloSimulator
 from simulator.ml_model import MLPredictor
+from tournament.groups import GroupStage
+from tournament.knockout import KnockoutStage
+from pipeline.fetch import DataFetcher
 
 logging.basicConfig(level=LOG_LEVEL, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
 
-# ─── Default 2026 World Cup Groups (placeholder until official draw) ────────────
+# ─── Fallback Groups (used ONLY if the live API has no draw published yet) ─────
+# This is a placeholder so the simulator is still runnable before the
+# official 2026 draw — it is never preferred over live API data.
 
-world_cup_groups = {
+_FALLBACK_GROUPS = {
     "A": ["Mexico", "South Africa", "South Korea", "Czechia"],
     "B": ["Canada", "Bosnia and Herzegovina", "Qatar", "Switzerland"],
     "C": ["Brazil", "Morocco", "Haiti", "Scotland"],
@@ -33,60 +38,22 @@ world_cup_groups = {
     "I": ["France", "Senegal", "Iraq", "Norway"],
     "J": ["Argentina", "Algeria", "Austria", "Jordan"],
     "K": ["Portugal", "DR Congo", "Uzbekistan", "Colombia"],
-    "L": ["England", "Croatia", "Ghana", "Panama"]
+    "L": ["England", "Croatia", "Ghana", "Panama"],
 }
 
-# Default ELO ratings (sourced from Club ELO approximations)
-DEFAULT_ELO_RATINGS = {
-    "Argentina": 2140,
-    "Spain": 2115,
-    "France": 2105,
-    "England": 2050,
-    "Brazil": 2035,
-    "Portugal": 2025,
-    "Germany": 1995,
-    "Netherlands": 1985,
-    "Belgium": 1965,
-    "Croatia": 1940,
-    "Morocco": 1935,
-    "Uruguay": 1925,
-    "Colombia": 1915,
-    "Japan": 1905,
-    "Switzerland": 1885,
-    "Austria": 1875,
-    "Mexico": 1860,
-    "Norway": 1855,
-    "Senegal": 1845,
-    "United States": 1835,
-    "Iran": 1825,
-    "Sweden": 1815,
-    "South Korea": 1805,
-    "Turkey": 1795,
-    "Ecuador": 1785,
-    "Egypt": 1775,
-    "Paraguay": 1765,
-    "Scotland": 1755,
-    "Algeria": 1745,
-    "Ivory Coast": 1735,
-    "Canada": 1725,
-    "Tunisia": 1715,
-    "Bosnia and Herzegovina": 1705,
-    "Ghana": 1695,
-    "Iraq": 1685,
-    "Jordan": 1675,
-    "Uzbekistan": 1665,
-    "Panama": 1655,
-    "South Africa": 1645,
-    "New Zealand": 1635,
-    "Saudi Arabia": 1625,
-    "Qatar": 1615,
-    "Cape Verde": 1605,
-    "DR Congo": 1595,
-    "Czechia": 1585,
-    "Curacao": 1575,
-    "Haiti": 1565,
-    "Australia": 1810
-}
+
+def _is_complete_2026_draw(groups: dict) -> bool:
+    """Return True only for a complete 12-group, 48-team draw."""
+    if not isinstance(groups, dict) or len(groups) != NUM_GROUPS:
+        return False
+
+    teams = []
+    for group_teams in groups.values():
+        if not isinstance(group_teams, list) or len(group_teams) != TEAMS_PER_GROUP:
+            return False
+        teams.extend(group_teams)
+
+    return len(teams) == NUM_GROUPS * TEAMS_PER_GROUP and len(set(teams)) == len(teams)
 
 
 class TournamentSimulator:
@@ -104,11 +71,40 @@ class TournamentSimulator:
         self,
         groups: dict = None,
         elo_ratings: dict = None,
-        n_simulations: int = 10_000
+        n_simulations: int = 10_000,
+        use_live_data: bool = True,
     ):
-        self.groups = groups or world_cup_groups
-        self.elo_engine = ELOEngine(elo_ratings or DEFAULT_ELO_RATINGS)
+        """
+        Args:
+            groups: Override group draw (skips API fetch if provided)
+            elo_ratings: Override ELO ratings (skips API fetch if provided)
+            n_simulations: Monte Carlo run count
+            use_live_data: If True, fetch groups/ELO from live APIs when
+                           not explicitly provided. If the API has no data
+                           yet (e.g. draw not published), falls back to a
+                           placeholder with a clear warning.
+        """
+        fetcher = None
+        if groups is None and use_live_data:
+            fetcher = DataFetcher()
+            groups = fetcher.fetch_wc_groups()
+            if not _is_complete_2026_draw(groups):
+                logger.warning(
+                    "No complete 2026 group draw available from API - using "
+                    "built-in 2026 World Cup groups"
+                )
+                groups = _FALLBACK_GROUPS
+        self.groups = groups or _FALLBACK_GROUPS
+
+        if elo_ratings is None and use_live_data:
+            fetcher = fetcher or DataFetcher()
+            all_teams = [t for grp in self.groups.values() for t in grp]
+            elo_ratings = fetcher.fetch_elo_ratings(all_teams)
+
+        self.elo_engine = ELOEngine(elo_ratings or {})
         self.mc_simulator = MonteCarloSimulator(self.elo_engine, n_simulations)
+        self.group_stage = GroupStage(self.groups, self.elo_engine, self.mc_simulator)
+        self.knockout_stage = KnockoutStage(self.elo_engine, self.mc_simulator)
         self.ml_predictor = MLPredictor()
         self.n_simulations = n_simulations
 
@@ -119,97 +115,40 @@ class TournamentSimulator:
         logger.info(f"Tournament Simulator ready: {len(self.groups)} groups, "
                     f"{sum(len(t) for t in self.groups.values())} teams")
 
-    def simulate_group_stage(self, group: list) -> dict:
-        """Simulate a group stage and return full standings."""
-        standings = self.mc_simulator.simulate_group(group)
-        # Sort by points → GD → GF → ELO
-        return dict(sorted(
-            standings.items(),
-            key=lambda x: (
-                x[1]["points"], x[1]["gd"],
-                x[1]["gf"], self.elo_engine.get_rating(x[0])
-            ),
-            reverse=True
-        ))
-
-    def simulate_knockout_bracket(self, teams: list) -> dict:
-        """
-        Simulate knockout bracket from a list of qualified teams.
-
-        Returns detailed bracket with all match results.
-        """
-        bracket = {"rounds": []}
-        remaining = teams.copy()
-        round_names = [
-            "Round of 32", "Round of 16", "Quarter Finals",
-            "Semi Finals", "Final"
-        ]
-        round_idx = 0
-
-        while len(remaining) > 1:
-            round_name = round_names[round_idx] if round_idx < len(round_names) else f"Round {round_idx+1}"
-            round_matches = []
-            next_round = []
-
-            # Pair teams: 1st group A vs 2nd group B, etc.
-            for i in range(0, len(remaining), 2):
-                if i + 1 < len(remaining):
-                    team_a, team_b = remaining[i], remaining[i+1]
-                    winner, ga, gb = self.mc_simulator.simulate_match(
-                        team_a, team_b, knockout=True
-                    )
-                    match_result = {
-                        "team_a": team_a,
-                        "team_b": team_b,
-                        "goals_a": ga,
-                        "goals_b": gb,
-                        "winner": winner,
-                        "was_penalty": ga == gb
-                    }
-                    round_matches.append(match_result)
-                    next_round.append(winner)
-                else:
-                    next_round.append(remaining[i])  # Bye
-
-            bracket["rounds"].append({
-                "name": round_name,
-                "matches": round_matches
-            })
-            remaining = next_round
-            round_idx += 1
-
-        bracket["winner"] = remaining[0] if remaining else "Unknown"
-        return bracket
-
     def run_full_simulation(self) -> dict:
         """
-        Run one full World Cup simulation.
+        Run one full World Cup simulation: 12-group stage (with the 8 best
+        3rd-placed teams advancing) followed by a proper 32-team knockout
+        bracket. Delegates to GroupStage and KnockoutStage so the bracket
+        math (32→16→8→4→2→1) is always correct and no teams are dropped.
+
         Returns complete tournament results.
         """
         logger.info("Running full tournament simulation...")
 
-        # Group stage
-        all_group_results = {}
-        qualified = []
+        # Group stage — includes best-third-place logic for 32-team bracket
+        group_results = self.group_stage.simulate_all_groups(
+            n_advance=2,
+            n_best_thirds=BEST_THIRD_PLACE_QUALIFIERS,
+        )
 
-        for group_name, teams in self.groups.items():
-            standings = self.simulate_group_stage(teams)
-            all_group_results[group_name] = standings
-
-            # Top 2 advance
-            qualifiers = list(standings.keys())[:2]
-            qualified.extend(qualifiers)
-            logger.debug(f"Group {group_name}: {qualifiers[0]} and {qualifiers[1]} advance")
-
-        # Knockout stage
-        bracket = self.simulate_knockout_bracket(qualified)
-        winner = bracket["winner"]
+        # Knockout stage — seeded bracket built from qualifiers + best thirds
+        bracket_order = self.knockout_stage.build_bracket(
+            group_results["qualified"],
+            best_thirds=group_results["best_thirds"],
+        )
+        knockout_result = self.knockout_stage.simulate_bracket(bracket_order)
+        winner = knockout_result["winner"]
         logger.info(f"Tournament winner: {winner}")
 
         return {
-            "group_stage": all_group_results,
-            "knockout": bracket,
+            "group_stage": group_results["standings"],
+            "best_thirds": group_results["best_thirds"],
+            "knockout": knockout_result,
+            "knockout_matches": knockout_result["all_matches"],
             "winner": winner,
+            "runner_up": knockout_result.get("runner_up"),
+            "third_place": knockout_result.get("third_place_team"),
             "groups_config": self.groups,
         }
 
@@ -217,9 +156,54 @@ class TournamentSimulator:
         """
         Run full Monte Carlo simulation across n_simulations tournaments.
         Returns win probabilities and stage progression rates.
+
+        Note: uses the same 12-group + best-thirds + 32-team bracket logic
+        as run_full_simulation, repeated n_simulations times.
         """
         logger.info(f"Starting Monte Carlo: {self.n_simulations:,} simulations")
-        return self.mc_simulator.run(self.groups)
+
+        from collections import defaultdict
+        results = defaultdict(int)
+        all_teams = [team for teams in self.groups.values() for team in teams]
+        stage_counts = {team: defaultdict(int) for team in all_teams}
+
+        for sim in range(self.n_simulations):
+            if sim % 1000 == 0 and sim > 0:
+                logger.info(f"  Completed {sim:,}/{self.n_simulations:,} simulations...")
+
+            group_results = self.group_stage.simulate_all_groups(
+                n_advance=2, n_best_thirds=BEST_THIRD_PLACE_QUALIFIERS
+            )
+            for team in group_results["all_qualified"]:
+                stage_counts[team]["round_of_32"] += 1
+
+            bracket_order = self.knockout_stage.build_bracket(
+                group_results["qualified"], best_thirds=group_results["best_thirds"]
+            )
+            knockout_result = self.knockout_stage.simulate_bracket(bracket_order)
+
+            for rnd in knockout_result["rounds"]:
+                stage_key = rnd["round"].lower().replace(" ", "_")
+                for winner in rnd["winners"]:
+                    stage_counts[winner][stage_key] += 1
+
+            results[knockout_result["winner"]] += 1
+
+        output = {}
+        for team in all_teams:
+            output[team] = {
+                "win_probability": round(results[team] / self.n_simulations * 100, 2),
+                "semi_final_rate": round(stage_counts[team].get("semi_finals", 0) / self.n_simulations * 100, 2),
+                "quarter_final_rate": round(stage_counts[team].get("quarter_finals", 0) / self.n_simulations * 100, 2),
+                "round_of_16_rate": round(stage_counts[team].get("round_of_16", 0) / self.n_simulations * 100, 2),
+                "round_of_32_rate": round(stage_counts[team]["round_of_32"] / self.n_simulations * 100, 2),
+                "elo_rating": self.elo_engine.get_rating(team),
+                "total_wins": results[team],
+            }
+
+        logger.info(f"Monte Carlo complete. Top team: "
+                    f"{max(output, key=lambda t: output[t]['win_probability'])}")
+        return dict(sorted(output.items(), key=lambda x: x[1]["win_probability"], reverse=True))
 
     def train_ml_model(self, historical_matches: list = None):
         """Train ML model on historical match data."""
@@ -291,14 +275,22 @@ class TournamentSimulator:
 # ─── Quick Test ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    sim = TournamentSimulator(n_simulations=1000)
+    # use_live_data=False for a fast offline test with placeholder groups/ELO.
+    # In production (main.py), leave use_live_data=True (the default) to
+    # pull the real draw and ratings from the APIs.
+    sim = TournamentSimulator(n_simulations=1000, use_live_data=False)
 
     print("=== Single Tournament Simulation ===")
     result = sim.run_full_simulation()
     print(f"Winner: {result['winner']}")
+    print(f"Runner-up: {result['runner_up']}")
+    print(f"Third place: {result['third_place']}")
+    print(f"Best thirds that qualified: {result['best_thirds']}")
 
     print("\n=== Group A Standings ===")
     for team, stats in result["group_stage"]["A"].items():
+        if team.startswith("_"):
+            continue
         print(f"  {team:12s}: {stats['points']}pts | GD:{stats['gd']:+d} | W{stats['wins']}D{stats['draws']}L{stats['losses']}")
 
     print("\n=== Match Comparison: Brazil vs France ===")

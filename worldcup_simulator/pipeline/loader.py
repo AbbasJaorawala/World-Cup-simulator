@@ -40,6 +40,51 @@ class DataLoader:
         conn.execute("PRAGMA journal_mode=WAL")  # Better concurrent access
         return conn
 
+    def load_teams_if_fresh(self, max_age_hours: float = 24) -> dict:
+        """
+        Load cached team ELO ratings from the DB, but only if EVERY row's
+        `updated_at` is within max_age_hours. Otherwise returns {} so the
+        caller knows to re-fetch from the API.
+
+        Exists to avoid burning API-Football's 100-requests/day free
+        quota re-fetching all ~48 teams' statistics on every run.
+
+        Returns:
+            {team_name: elo_rating} if cache is fresh and non-empty, else {}
+        """
+        from datetime import datetime, timedelta
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT name, elo_rating, updated_at FROM teams"
+            ).fetchall()
+
+        if not rows:
+            logger.info("No cached team ratings found — fetch required")
+            return {}
+
+        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        for row in rows:
+            updated_at = row["updated_at"]
+            if not updated_at:
+                logger.info("Cached ratings missing timestamp — fetch required")
+                return {}
+            try:
+                ts = datetime.fromisoformat(updated_at)
+            except ValueError:
+                logger.warning(f"Unparseable updated_at '{updated_at}' — fetch required")
+                return {}
+            if ts < cutoff:
+                logger.info(
+                    f"Cached rating for '{row['name']}' is older than "
+                    f"{max_age_hours}h — fetch required"
+                )
+                return {}
+
+        result = {row["name"]: row["elo_rating"] for row in rows}
+        logger.info(f"Using {len(result)} cached team ratings (fresh, <{max_age_hours}h old)")
+        return result
+
     def _init_db(self):
         """Create all tables if they don't exist."""
         with self._connect() as conn:

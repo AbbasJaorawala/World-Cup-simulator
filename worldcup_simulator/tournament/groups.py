@@ -4,8 +4,7 @@ import logging
 import sys, os
 from itertools import combinations
 
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path[0] = project_root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import LOG_FORMAT, LOG_LEVEL
 from simulator.elo import ELOEngine
 from simulator.monte_carlo import MonteCarloSimulator
@@ -176,20 +175,33 @@ class GroupStage:
 
     # ── Simulate All Groups ───────────────────────────────────────────────────
 
-    def simulate_all_groups(self, n_advance: int = 2) -> dict:
+    def simulate_all_groups(self, n_advance: int = 2, n_best_thirds: int = 8) -> dict:
         """
         Simulate every group in the tournament.
 
+        2026 FIFA format: top 2 from each of the 12 groups advance
+        automatically (24 teams), PLUS the 8 best 3rd-placed teams across
+        all groups also advance — giving a 32-team knockout bracket.
+
+        Args:
+            n_advance: teams guaranteed to advance per group (default 2)
+            n_best_thirds: number of best 3rd-place teams to also advance
+                           (default 8, per 2026 format). Set to 0 to disable
+                           (e.g. for a classic 8-group/16-team format).
+
         Returns:
             {
-                "standings": {group_name: {team: stats}},
-                "qualified":  {group_name: [team1, team2]},  # teams advancing
-                "all_qualified": [team1, team2, ...],         # flat list
+                "standings": {group_name: {team: stats, "_ranked": [...]}},
+                "qualified": {group_name: [top teams that auto-advance]},
+                "third_place_candidates": [{team, group, points, gd, gf}, ...],
+                "best_thirds": [team, ...],          # teams that made the cut
+                "all_qualified": [team1, team2, ...], # flat list, 24 or 32 teams
             }
         """
         standings = {}
         qualified_by_group = {}
         all_qualified = []
+        third_place_candidates = []
 
         for group_name in self.groups:
             table = self.simulate_group(group_name)
@@ -205,11 +217,38 @@ class GroupStage:
             qualified_by_group[group_name] = advancers
             all_qualified.extend(advancers)
 
+            # Track the 3rd-placed team as a candidate for "best thirds"
+            if n_best_thirds > 0 and len(ranked) >= 3:
+                third_team = ranked[2]
+                stats = table[third_team]
+                third_place_candidates.append({
+                    "team": third_team,
+                    "group": group_name,
+                    "points": stats["points"],
+                    "gd": stats["gd"],
+                    "gf": stats["gf"],
+                    "elo": self.elo.get_rating(third_team),
+                })
+
             logger.info(f"Group {group_name}: {advancers[0]} (1st), {advancers[1]} (2nd) qualify")
+
+        # Rank all 3rd-placed teams across groups and take the best N
+        best_thirds = []
+        if n_best_thirds > 0 and third_place_candidates:
+            ranked_thirds = sorted(
+                third_place_candidates,
+                key=lambda t: (t["points"], t["gd"], t["gf"], t["elo"]),
+                reverse=True,
+            )
+            best_thirds = [t["team"] for t in ranked_thirds[:n_best_thirds]]
+            all_qualified.extend(best_thirds)
+            logger.info(f"Best {len(best_thirds)} third-placed teams qualify: {best_thirds}")
 
         return {
             "standings": standings,
             "qualified": qualified_by_group,
+            "third_place_candidates": third_place_candidates,
+            "best_thirds": best_thirds,
             "all_qualified": all_qualified,
         }
 
@@ -236,72 +275,7 @@ if __name__ == "__main__":
     from simulator.elo import ELOEngine
     from simulator.monte_carlo import MonteCarloSimulator
 
-    ratings = {
-    "Argentina": 2140,
-    "Spain": 2115,
-    "France": 2105,
-    "England": 2050,
-    "Brazil": 2035,
-    "Portugal": 2025,
-    "Germany": 1995,
-    "Netherlands": 1985,
-    "Belgium": 1965,
-    "Croatia": 1940,
-    "Morocco": 1935,
-    "Uruguay": 1925,
-    "Colombia": 1915,
-    "Japan": 1905,
-    "Switzerland": 1885,
-    "Austria": 1875,
-    "Mexico": 1860,
-    "Norway": 1855,
-    "Senegal": 1845,
-    "United States": 1835,
-    "Iran": 1825,
-    "Sweden": 1815,
-    "South Korea": 1805,
-    "Turkey": 1795,
-    "Ecuador": 1785,
-    "Egypt": 1775,
-    "Paraguay": 1765,
-    "Scotland": 1755,
-    "Algeria": 1745,
-    "Ivory Coast": 1735,
-    "Canada": 1725,
-    "Tunisia": 1715,
-    "Bosnia and Herzegovina": 1705,
-    "Ghana": 1695,
-    "Iraq": 1685,
-    "Jordan": 1675,
-    "Uzbekistan": 1665,
-    "Panama": 1655,
-    "South Africa": 1645,
-    "New Zealand": 1635,
-    "Saudi Arabia": 1625,
-    "Qatar": 1615,
-    "Cape Verde": 1605,
-    "DR Congo": 1595,
-    "Czechia": 1585,
-    "Curacao": 1575,
-    "Haiti": 1565,
-    "Australia": 1810
-}
 
-
-    groups = {
-    "A": ["Mexico", "South Africa", "South Korea", "Czechia"],
-    "B": ["Canada", "Bosnia and Herzegovina", "Qatar", "Switzerland"],
-    "C": ["Brazil", "Morocco", "Haiti", "Scotland"],
-    "D": ["United States", "Paraguay", "Australia", "Turkey"],
-    "E": ["Germany", "Curacao", "Ivory Coast", "Ecuador"],
-    "F": ["Netherlands", "Japan", "Sweden", "Tunisia"],
-    "G": ["Belgium", "Egypt", "Iran", "New Zealand"],
-    "H": ["Spain", "Cape Verde", "Saudi Arabia", "Uruguay"],
-    "I": ["France", "Senegal", "Iraq", "Norway"],
-    "J": ["Argentina", "Algeria", "Austria", "Jordan"],
-    "K": ["Portugal", "DR Congo", "Uzbekistan", "Colombia"],
-    "L": ["England", "Croatia", "Ghana", "Panama"]
-}
 
     elo = ELOEngine(ratings)
     mc = MonteCarloSimulator(elo, n_simulations=1)
