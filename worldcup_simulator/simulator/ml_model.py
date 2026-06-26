@@ -3,6 +3,7 @@
 import numpy as np
 import logging
 import os, sys
+import pickle
 from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -221,6 +222,15 @@ class MLPredictor:
         except Exception as e:
             logger.warning("Could not save ML model cache: %s", e)
 
+    def _cleanup_corrupted_cache(self) -> None:
+        for path in (self.MODEL_PATH, self.SCALER_PATH):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    logger.warning("Removed corrupted cached file: %s", path)
+            except OSError:
+                logger.warning("Could not remove corrupted cached file: %s", path)
+
     def load(self) -> bool:
         """Load a previously trained model from disk."""
         if not SKLEARN_AVAILABLE:
@@ -232,7 +242,7 @@ class MLPredictor:
                 self.is_trained = True
                 logger.info("Model loaded from disk")
                 return True
-            except Exception as e:
+            except (ImportError, ModuleNotFoundError, pickle.UnpicklingError, EOFError, ValueError, OSError) as e:
                 self.model = None
                 self.scaler = StandardScaler() if SKLEARN_AVAILABLE else None
                 self.is_trained = False
@@ -241,6 +251,16 @@ class MLPredictor:
                     "or use ELO fallback. Error: %s",
                     e,
                 )
+                self._cleanup_corrupted_cache()
+            except Exception as e:
+                self.model = None
+                self.scaler = StandardScaler() if SKLEARN_AVAILABLE else None
+                self.is_trained = False
+                logger.warning(
+                    "Unexpected error loading ML model cache; will use ELO fallback. Error: %s",
+                    e,
+                )
+                self._cleanup_corrupted_cache()
         return False
 
     def predict(

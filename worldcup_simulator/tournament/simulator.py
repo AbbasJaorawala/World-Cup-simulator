@@ -109,8 +109,15 @@ class TournamentSimulator:
         self.n_simulations = n_simulations
 
         # Try loading a saved ML model
-        if not self.ml_predictor.load():
-            logger.info("No saved ML model found — will train on demand")
+        try:
+            if not self.ml_predictor.load():
+                logger.info("No saved ML model found — will train on demand")
+        except Exception as exc:
+            self.ml_predictor = MLPredictor()
+            logger.warning(
+                "Failed to load ML model cache. Falling back to ELO-based simulation. Error: %s",
+                exc,
+            )
 
         logger.info(f"Tournament Simulator ready: {len(self.groups)} groups, "
                     f"{sum(len(t) for t in self.groups.values())} teams")
