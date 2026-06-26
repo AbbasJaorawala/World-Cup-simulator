@@ -213,21 +213,34 @@ class MLPredictor:
         """Save trained model and scaler to disk."""
         if not SKLEARN_AVAILABLE:
             return
-        os.makedirs(os.path.dirname(self.MODEL_PATH), exist_ok=True)
-        joblib.dump(self.model, self.MODEL_PATH)
-        joblib.dump(self.scaler, self.SCALER_PATH)
-        logger.info("Model saved to disk")
+        try:
+            os.makedirs(os.path.dirname(self.MODEL_PATH), exist_ok=True)
+            joblib.dump(self.model, self.MODEL_PATH)
+            joblib.dump(self.scaler, self.SCALER_PATH)
+            logger.info("Model saved to disk")
+        except Exception as e:
+            logger.warning("Could not save ML model cache: %s", e)
 
     def load(self) -> bool:
         """Load a previously trained model from disk."""
         if not SKLEARN_AVAILABLE:
             return False
         if os.path.exists(self.MODEL_PATH) and os.path.exists(self.SCALER_PATH):
-            self.model = joblib.load(self.MODEL_PATH)
-            self.scaler = joblib.load(self.SCALER_PATH)
-            self.is_trained = True
-            logger.info("Model loaded from disk")
-            return True
+            try:
+                self.model = joblib.load(self.MODEL_PATH)
+                self.scaler = joblib.load(self.SCALER_PATH)
+                self.is_trained = True
+                logger.info("Model loaded from disk")
+                return True
+            except Exception as e:
+                self.model = None
+                self.scaler = StandardScaler() if SKLEARN_AVAILABLE else None
+                self.is_trained = False
+                logger.warning(
+                    "Could not load saved ML model cache; will train on demand "
+                    "or use ELO fallback. Error: %s",
+                    e,
+                )
         return False
 
     def predict(
