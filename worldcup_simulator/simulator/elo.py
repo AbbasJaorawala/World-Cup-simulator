@@ -205,11 +205,12 @@ class ELOEngine:
         ra = self.get_rating(team_a)
         rb = self.get_rating(team_b)
 
-        # Expected goals: rough estimation based on ELO difference
+        # Expected goals: realistic World Cup estimation based on ELO difference
+        # Real World Cup matches average 2.7 goals total (~1.35 per team)
         elo_diff = ra - rb
-        base_goals = 1.2
-        exp_goals_a = base_goals + (elo_diff / 1000)
-        exp_goals_b = base_goals - (elo_diff / 1000)
+        base_goals = 1.1  # Conservative base for World Cup matches
+        exp_goals_a = base_goals + (elo_diff / 1500)  # Reduced ELO weight
+        exp_goals_b = base_goals - (elo_diff / 1500)
 
         return {
             "team_a": team_a,

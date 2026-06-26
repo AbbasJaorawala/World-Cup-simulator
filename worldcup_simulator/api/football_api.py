@@ -151,6 +151,41 @@ class FootballDataClient:
             return matches
         return []
 
+    def get_team_squad(self, team_id: int) -> Optional[list]:
+        """Fetch squad/players for a specific team."""
+        url = f"{self.base}/teams/{team_id}"
+        data = _get(url, headers=self.headers)
+        if data:
+            squad = data.get("squad", [])
+            logger.info(f"Fetched {len(squad)} players for team {team_id}")
+            return squad
+        return []
+
+    def get_teams_with_squads(self, competition_code: str = "WC") -> dict:
+        """Fetch all teams and their squads for a competition.
+        
+        Returns:
+            {team_name: [player1, player2, ...], ...}
+        """
+        teams = self.get_teams(competition_code)
+        squads = {}
+        for team in teams or []:
+            team_name = team.get("name")
+            team_id = team.get("id")
+            if team_name and team_id:
+                squad = self.get_team_squad(team_id)
+                if squad:
+                    # Extract player names and positions
+                    players = []
+                    for player in squad:
+                        player_name = player.get("name")
+                        position = player.get("position", "Unknown")
+                        if player_name:
+                            players.append({"name": player_name, "position": position})
+                    if players:
+                        squads[team_name] = players
+        return squads
+
 
 # ─── SportAPI (RapidAPI) Client ────────────────────────────────────────────────
 
@@ -603,6 +638,15 @@ class FootballAPIFactory:
             if teams:
                 groups[group_name] = teams
         return groups
+
+    def get_team_squads(self, competition_code: str = "WC") -> dict:
+        """
+        Fetch real player squads for all teams in a competition.
+        
+        Returns:
+            {team_name: [{name: player_name, position: position}, ...], ...}
+        """
+        return self.football_data.get_teams_with_squads(competition_code)
 
 
 # ─── Quick Test ────────────────────────────────────────────────────────────────

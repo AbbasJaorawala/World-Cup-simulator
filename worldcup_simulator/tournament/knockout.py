@@ -117,31 +117,32 @@ class KnockoutStage:
 
     # ── Match Simulation ──────────────────────────────────────────────────────
 
-    def simulate_match(self, team_a: str, team_b: str) -> dict:
+    def simulate_match(self, team_a: str, team_b: str, round_name: str) -> dict:
         """
         Simulate a single knockout match (penalties resolve draws).
 
         Returns:
-            {team_a, team_b, goals_a, goals_b, winner, went_to_penalties,
-             elo_a, elo_b, win_prob_a}
+            Full match record including goal/assist events and penalties.
         """
-        winner, goals_a, goals_b = self.mc.simulate_match(
-            team_a, team_b, neutral=True, knockout=True
+        match_data = self.mc.simulate_match_with_events(
+            team_a, team_b, neutral=True, knockout=True, round_name=round_name
         )
         win_prob = self.elo.predict_match(team_a, team_b)["win_prob"]
 
         return {
             "team_a": team_a,
             "team_b": team_b,
-            "goals_a": goals_a,
-            "goals_b": goals_b,
-            "winner": winner,
-            "went_to_penalties": goals_a == goals_b,
+            "goals_a": match_data["goals_a"],
+            "goals_b": match_data["goals_b"],
+            "winner": match_data["winner"],
+            "went_to_penalties": bool(match_data["penalty_shootout"]),
             "elo_a": self.elo.get_rating(team_a),
             "elo_b": self.elo.get_rating(team_b),
             "win_prob_a": win_prob,
-            "was_upset": (winner == team_b and win_prob > 0.5)
-                         or (winner == team_a and win_prob < 0.5),
+            "was_upset": (match_data["winner"] == team_b and win_prob > 0.5)
+                         or (match_data["winner"] == team_a and win_prob < 0.5),
+            "events": match_data["events"],
+            "penalty_shootout": match_data["penalty_shootout"],
         }
 
     # ── Round Simulation ──────────────────────────────────────────────────────
@@ -166,7 +167,7 @@ class KnockoutStage:
 
         for i in range(0, len(teams), 2):
             if i + 1 < len(teams):
-                match = self.simulate_match(teams[i], teams[i + 1])
+                match = self.simulate_match(teams[i], teams[i + 1], round_name)
                 matches.append(match)
                 winners.append(match["winner"])
             else:
@@ -233,7 +234,7 @@ class KnockoutStage:
         third_place_result = None
         third_place_team = None
         if len(semi_losers) == 2:
-            third_place_result = self.simulate_match(semi_losers[0], semi_losers[1])
+            third_place_result = self.simulate_match(semi_losers[0], semi_losers[1], "Third Place Play-off")
             third_place_team = third_place_result["winner"]
             logger.info(f"3rd place: {third_place_team}")
 

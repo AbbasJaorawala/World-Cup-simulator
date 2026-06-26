@@ -75,8 +75,16 @@ class GroupStage:
 
         table = {team: self._empty_record() for team in teams}
 
+        group_events = []
         for team_a, team_b in combinations(teams, 2):
-            result, ga, gb = self.mc.simulate_match(team_a, team_b, neutral=True)
+            match_data = self.mc.simulate_match_with_events(
+                team_a, team_b, neutral=True, knockout=False,
+                round_name=f"Group {group_name}"
+            )
+            result = match_data["winner"]
+            ga = match_data["goals_a"]
+            gb = match_data["goals_b"]
+            group_events.extend(match_data["events"])
 
             # Update played counts
             table[team_a]["played"] += 1
@@ -112,7 +120,7 @@ class GroupStage:
             table[team]["gd"] = table[team]["gf"] - table[team]["ga"]
 
         logger.debug(f"Group {group_name} simulated")
-        return table
+        return table, group_events
 
     # ── Tiebreaking ───────────────────────────────────────────────────────────
 
@@ -203,8 +211,10 @@ class GroupStage:
         all_qualified = []
         third_place_candidates = []
 
+        group_events = []
         for group_name in self.groups:
-            table = self.simulate_group(group_name)
+            table, events = self.simulate_group(group_name)
+            group_events.extend(events)
             ranked = self.rank_group(table)
             advancers = ranked[:n_advance]
 
@@ -250,6 +260,7 @@ class GroupStage:
             "third_place_candidates": third_place_candidates,
             "best_thirds": best_thirds,
             "all_qualified": all_qualified,
+            "group_events": group_events,
         }
 
     # ── Display Helpers ───────────────────────────────────────────────────────

@@ -101,8 +101,17 @@ class TournamentSimulator:
             all_teams = [t for grp in self.groups.values() for t in grp]
             elo_ratings = fetcher.fetch_elo_ratings(all_teams)
 
+        # Fetch real player squads if available
+        squads = {}
+        if use_live_data:
+            fetcher = fetcher or DataFetcher()
+            try:
+                squads = fetcher.fetch_team_squads()
+            except Exception as exc:
+                logger.warning(f"Failed to fetch team squads from API: {exc}")
+
         self.elo_engine = ELOEngine(elo_ratings or {})
-        self.mc_simulator = MonteCarloSimulator(self.elo_engine, n_simulations)
+        self.mc_simulator = MonteCarloSimulator(self.elo_engine, n_simulations, squads=squads)
         self.group_stage = GroupStage(self.groups, self.elo_engine, self.mc_simulator)
         self.knockout_stage = KnockoutStage(self.elo_engine, self.mc_simulator)
         self.ml_predictor = MLPredictor()
@@ -151,6 +160,7 @@ class TournamentSimulator:
         return {
             "group_stage": group_results["standings"],
             "best_thirds": group_results["best_thirds"],
+            "group_events": group_results.get("group_events", []),
             "knockout": knockout_result,
             "knockout_matches": knockout_result["all_matches"],
             "winner": winner,

@@ -90,6 +90,26 @@ class DataFetcher:
             logger.warning("No group draw available from API yet")
         return groups
 
+    def fetch_team_squads(self) -> dict:
+        """
+        Fetch real player squads for all World Cup teams from football-data.org.
+
+        Returns:
+            {team_name: [{"name": player_name, "position": position}, ...], ...}
+        """
+        logger.info("Fetching team squads from football-data.org...")
+        try:
+            squads = self.api.get_team_squads()
+            if squads:
+                logger.info(f"Fetched squads for {len(squads)} teams")
+                return squads
+            else:
+                logger.warning("No squads available from API")
+                return {}
+        except Exception as e:
+            logger.warning(f"Failed to fetch squads: {e}")
+            return {}
+
     # ── Historical Match Data ─────────────────────────────────────────────────
 
     def fetch_historical_matches(self, years: list = None) -> list:

@@ -157,6 +157,7 @@ def knockout_frame(result: dict) -> pd.DataFrame:
                 "Upset": "Yes" if match["was_upset"] else "",
                 "ELO A": round(match["elo_a"], 0),
                 "ELO B": round(match["elo_b"], 0),
+                "Goals": match["goals_a"] + match["goals_b"],
             }
         )
     return pd.DataFrame(rows)
@@ -192,6 +193,108 @@ def ratings_frame(sim: TournamentSimulator) -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows).sort_values(["ELO", "Team"], ascending=[False, True])
+
+
+def extract_events(result: dict) -> list[dict]:
+    events = list(result.get("group_events", []))
+    for match in result.get("knockout_matches", []):
+        events.extend(match.get("events", []))
+    return events
+
+
+def aggregate_player_stats(events: list[dict]) -> dict:
+    stats = {}
+    for event in events:
+        if event.get("event") != "goal":
+            continue
+        player = event.get("player")
+        assist = event.get("assist")
+        team = event.get("team")
+        if player not in stats:
+            stats[player] = {"team": team, "goals": 0, "assists": 0}
+        stats[player]["goals"] += 1
+        if assist:
+            if assist not in stats:
+                stats[assist] = {"team": team, "goals": 0, "assists": 0}
+            stats[assist]["assists"] += 1
+    return stats
+
+
+def award_summary(result: dict) -> dict:
+    events = extract_events(result)
+    stats = aggregate_player_stats(events)
+    if not stats:
+        return {
+            "golden_boot": "N/A",
+            "golden_ball": "N/A",
+            "most_assists": "N/A",
+            "most_ga": "N/A",
+        }
+
+    sorted_goals = sorted(stats.items(), key=lambda x: (x[1]["goals"], x[1]["assists"]), reverse=True)
+    sorted_assists = sorted(stats.items(), key=lambda x: (x[1]["assists"], x[1]["goals"]), reverse=True)
+    sorted_ga = sorted(stats.items(), key=lambda x: (x[1]["goals"] + x[1]["assists"], x[1]["goals"]), reverse=True)
+
+    def format_leader(entries, key_name):
+        top_value = entries[0][1][key_name] if key_name in entries[0][1] else entries[0][1]["goals"] + entries[0][1]["assists"]
+        leaders = [f"{player} ({value})" for player, value in [(entries[0][0], entries[0][1].get(key_name, entries[0][1]["goals"] + entries[0][1]["assists"]))]]
+        for player, values in entries[1:]:
+            curr = values.get(key_name, values["goals"] + values["assists"])
+            if curr == top_value:
+                leaders.append(f"{player} ({curr})")
+            else:
+                break
+        return ", ".join(leaders)
+
+    golden_boot = format_leader(sorted_goals, "goals")
+    most_assists = format_leader(sorted_assists, "assists")
+    most_ga = format_leader(sorted_ga, None)
+    golden_ball = most_ga
+
+    return {
+        "golden_boot": golden_boot,
+        "golden_ball": golden_ball,
+        "most_assists": most_assists,
+        "most_ga": most_ga,
+    }
+
+
+def knockout_scorers_frame(result: dict) -> pd.DataFrame:
+    events = [e for e in extract_events(result) if e.get("event") == "goal" and not e.get("round", "").startswith("Group")]
+    scorer_stats = {}
+    for event in events:
+        player = event["player"]
+        assist = event.get("assist")
+        team = event["team"]
+        scorer_stats.setdefault(player, {"team": team, "goals": 0, "assists": 0})
+        scorer_stats[player]["goals"] += 1
+        if assist:
+            scorer_stats.setdefault(assist, {"team": team, "goals": 0, "assists": 0})
+            scorer_stats[assist]["assists"] += 1
+    rows = [
+        {"Player": player, "Team": stats["team"], "Goals": stats["goals"], "Assists": stats["assists"], "G+A": stats["goals"] + stats["assists"]}
+        for player, stats in sorted(scorer_stats.items(), key=lambda x: (x[1]["goals"] + x[1]["assists"], x[1]["goals"]), reverse=True)
+    ]
+    return pd.DataFrame(rows)
+
+
+def penalty_shootout_frame(result: dict) -> pd.DataFrame:
+    rows = []
+    for match in result.get("knockout_matches", []):
+        for pen in match.get("penalty_shootout", []):
+            rows.append(
+                {
+                    "Round": match["round"],
+                    "Match": f"{match['team_a']} vs {match['team_b']}",
+                    "Kick": pen["kick"],
+                    "Team": pen["team"],
+                    "Player": pen["player"],
+                    "Keeper": pen["keeper"],
+                    "Result": pen["result"],
+                    "Score": pen["score"],
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def group_config_frame(groups: dict) -> pd.DataFrame:
@@ -315,6 +418,7 @@ tabs = st.tabs(
 with tabs[0]:
     standings_df = standings_frame(single_result)
     knockout_df = knockout_frame(single_result)
+    awards = award_summary(single_result)
     left, right = st.columns([1.15, 1])
     with left:
         qualifiers = standings_df[standings_df["Qualifies"] != ""]
@@ -332,6 +436,12 @@ with tabs[0]:
         fig.update_xaxes(matches=None, showticklabels=False)
         st.plotly_chart(fig, width="stretch")
     with right:
+        st.subheader("Tournament honors")
+        st.write(f"**Golden Boot:** {awards['golden_boot']}")
+        st.write(f"**Golden Ball / Most G+A:** {awards['golden_ball']}")
+        st.write(f"**Most assists:** {awards['most_assists']}")
+        st.write(f"**Best goals+assists:** {awards['most_ga']}")
+        st.markdown("---")
         st.subheader("Final path")
         final_rounds = knockout_df[knockout_df["Round"].isin(["Semi Finals", "Final", "Third Place Play-off"])]
         st.dataframe(final_rounds, width="stretch", hide_index=True)
@@ -364,6 +474,22 @@ with tabs[2]:
     c1, c2 = st.columns(2)
     c1.metric("Upsets", upset_count)
     c2.metric("Penalty shootouts", pens_count)
+
+    st.markdown("---")
+    st.subheader("Knockout scorers & assists")
+    scorers_df = knockout_scorers_frame(single_result)
+    if not scorers_df.empty:
+        st.dataframe(scorers_df.head(25), width="stretch", hide_index=True)
+    else:
+        st.info("No knockout goals were recorded.")
+
+    pens_df = penalty_shootout_frame(single_result)
+    if not pens_df.empty:
+        st.markdown("---")
+        st.subheader("Penalty shootout details")
+        st.dataframe(pens_df, width="stretch", hide_index=True)
+    else:
+        st.info("No penalty shootouts occurred in this simulation.")
 
 with tabs[3]:
     mc_results = st.session_state.mc_results

@@ -23,10 +23,213 @@ class MonteCarloSimulator:
     football results including upsets, draws, and penalty shootouts.
     """
 
-    def __init__(self, elo_engine: ELOEngine, n_simulations: int = SIMULATION_RUNS):
+    # Realistic player names by country/region for synthetic rosters
+    PLAYER_NAMES = {
+        "Brazil": {
+            "forwards": ["Vinícius Júnior", "Rodrygo", "Raphinha", "Neymar"],
+            "midfielders": ["Bruno Guimarães", "Paquetá", "Casemiro", "Lucas Paquetá"],
+            "defenders": ["Marquinhos", "Éder Militão", "Danilo", "Renan Lodi"],
+            "goalkeeper": ["Alisson"],
+        },
+        "Argentina": {
+            "forwards": ["Lautaro Martínez", "Julián Álvarez", "Lionel Messi", "Ángel Correa"],
+            "midfielders": ["Alexis Mac Allister", "Enzo Fernández", "Rodrigo De Paul", "Exequiel Palacios"],
+            "defenders": ["Nicolás Otamendi", "Nicolás Tagliafico", "Cristian Romero", "Nicolás Otamendi"],
+            "goalkeeper": ["Emiliano Martínez"],
+        },
+        "France": {
+            "forwards": ["Kylian Mbappé", "Antoine Griezmann", "Ousmane Dembélé", "Randal Kolo Muani"],
+            "midfielders": ["Aurélien Tchouaméni", "Eduardo Camavinga", "Adrien Rabiot", "N’Golo Kanté"],
+            "defenders": ["Dayot Upamecano", "Jules Koundé", "Theo Hernandez", "Raphaël Varane"],
+            "goalkeeper": ["Hugo Lloris"],
+        },
+        "Germany": {
+            "forwards": ["Harry Kane", "Florian Wirtz", "Jamal Musiala", "Leroy Sané"],
+            "midfielders": ["Joshua Kimmich", "İlkay Gündoğan", "Julian Brandt", "Florian Neuhaus"],
+            "defenders": ["Antonio Rüdiger", "Nico Schlotterbeck", "David Raum", "Matthias Ginter"],
+            "goalkeeper": ["Manuel Neuer"],
+        },
+        "Spain": {
+            "forwards": ["Lamine Yamal", "Nico Williams", "Dani Olmo", "Ferran Torres"],
+            "midfielders": ["Rodri", "Pedri", "Gavi", "Martín Zubimendi"],
+            "defenders": ["Dani Carvajal", "Aymeric Laporte", "Pau Cubarsí", "Alejandro Grimaldo"],
+            "goalkeeper": ["Unai Simón"],
+        },
+        "England": {
+            "forwards": ["Harry Kane", "Bukayo Saka", "Phil Foden", "Cole Palmer"],
+            "midfielders": ["Declan Rice", "Jude Bellingham", "Conor Gallagher", "Trent Alexander-Arnold"],
+            "defenders": ["Kyle Walker", "John Stones", "Ben Chilwell", "Marc Guehi"],
+            "goalkeeper": ["Jordan Pickford"],
+        },
+        "Italy": {
+            "forwards": ["Gianluca Scamacca", "Moise Kean", "Mateo Retegui", "Federico Chiesa"],
+            "midfielders": ["Nicolò Barella", "Jorginho", "Sandro Tonali", "Davide Frattesi"],
+            "defenders": ["Alessandro Bastoni", "Francesco Acerbi", "Giovanni Di Lorenzo", "Federico Dimarco"],
+            "goalkeeper": ["Gianluigi Donnarumma"],
+        },
+        "Netherlands": {
+            "forwards": ["Cody Gakpo", "Memphis Depay", "Donyell Malen", "Wout Weghorst"],
+            "midfielders": ["Frenkie de Jong", "Teun Koopmeiners", "Ryan Gravenberch", "Xavi Simons"],
+            "defenders": ["Virgil van Dijk", "Matthijs de Ligt", "Nathan Aké", "Stefan de Vrij"],
+            "goalkeeper": ["Bart Verbruggen"],
+        },
+        "Portugal": {
+            "forwards": ["Cristiano Ronaldo", "Rafael Leão", "João Félix", "Bernardo Silva"],
+            "midfielders": ["Bruno Fernandes", "Vitinha", "Ruben Neves", "João Palhinha"],
+            "defenders": ["Rúben Dias", "Nuno Mendes", "João Cancelo", "Pepe"],
+            "goalkeeper": ["Diogo Costa"],
+        },
+        "Belgium": {
+            "forwards": ["Romelu Lukaku", "Leandro Trossard", "Loïs Openda", "Jeremy Doku"],
+            "midfielders": ["Kevin De Bruyne", "Youri Tielemans", "Amadou Onana", "Orel Mangala"],
+            "defenders": ["Wout Faes", "Arthur Theate", "Zeno Debast", "Timothy Castagne"],
+            "goalkeeper": ["Thibaut Courtois"],
+        },
+        "Mexico": {
+            "forwards": ["Santiago Giménez", "Henry Martín", "Alexis Vega", "Julián Quiñones"],
+            "midfielders": ["Edson Álvarez", "Luis Chávez", "Roberto Alvarado", "Erick Sánchez"],
+            "defenders": ["Jorge Sánchez", "César Montes", "Johan Vásquez", "Néstor Araujo"],
+            "goalkeeper": ["Guillermo Ochoa"],
+        },
+        "United States": {
+            "forwards": ["Christian Pulisic", "Tim Weah", "Ricardo Pepi", "Haji Wright"],
+            "midfielders": ["Weston McKennie", "Yunus Musah", "Gio Reyna", "Tyler Adams"],
+            "defenders": ["Antonee Robinson", "Chris Richards", "Tim Ream", "Sergiño Dest"],
+            "goalkeeper": ["Matt Turner"],
+        },
+        "Sweden": {
+            "forwards": ["Alexander Isak", "Viktor Gyökeres", "Anthony Elanga", "Dejan Kulusevski"],
+            "midfielders": ["Jesper Karlsson", "Emil Forsberg", "Kristoffer Olsson", "Sebastian Nanasi"],
+            "defenders": ["Victor Lindelöf", "Emil Krafth", "Gabriel Gudmundsson", "Linus Wahlqvist"],
+            "goalkeeper": ["Robin Olsen"],
+        },
+        "Ecuador": {
+            "forwards": ["Enner Valencia", "Kevin Rodríguez", "Michael Estrada", "Romario Ibarra"],
+            "midfielders": ["Carlos Gruezo", "Alan Franco", "Pedro Vite", "Joao Ortiz"],
+            "defenders": ["Piero Hincapié", "Félix Torres", "Robert Arboleda", "Diego Palacios"],
+            "goalkeeper": ["Hernán Galíndez"],
+        },
+        "South Africa": {
+            "forwards": ["Lyle Foster", "Percy Tau", "Themba Zwane", "Kgaogelo Sekgota"],
+            "midfielders": ["Teboho Mokoena", "Mihlali Mayambela", "Sphephelo Sithole", "Aubrey Modiba"],
+            "defenders": ["Sydney Mobbie", "Rushine de Reuck", "Nkosinathi Sibisi", "Siyabonga Ngezana"],
+            "goalkeeper": ["Ronwen Williams"],
+        },
+        "Morocco": {
+            "forwards": ["Youssef En-Nesyri", "Hakim Ziyech", "Sofiane Boufal", "Amine Adli"],
+            "midfielders": ["Amine Harit", "Bilal El Khannouss", "Azzedine Ounahi", "Selim Amallah"],
+            "defenders": ["Nayef Aguerd", "Romain Saïss", "Jawad El Yamiq", "Noussair Mazraoui"],
+            "goalkeeper": ["Yassine Bounou"],
+        },
+        "Canada": {
+            "forwards": ["Jonathan David", "Cyle Larin", "Tani Oluwaseyi", "Theo Corbeanu"],
+            "midfielders": ["Stephen Eustáquio", "Ismaël Koné", "Mathieu Choinière", "Ali Ahmed"],
+            "defenders": ["Alistair Johnston", "Richie Laryea", "Derek Cornelius", "Moïse Bombito"],
+            "goalkeeper": ["Dayne St. Clair"],
+        },
+    }
+
+    def __init__(self, elo_engine: ELOEngine, n_simulations: int = SIMULATION_RUNS, squads: dict = None):
         self.elo = elo_engine
         self.n_simulations = n_simulations
+        self._player_rosters = {}
+        self.api_squads = squads or {}
         logger.info(f"Monte Carlo Simulator initialized: {n_simulations:,} runs")
+
+    def _build_team_roster(self, team: str) -> list[dict]:
+        if team in self._player_rosters:
+            return self._player_rosters[team]
+
+        roster = []
+        
+        # First, try to use real players from API squads
+        if team in self.api_squads:
+            api_squad = self.api_squads[team]
+            if isinstance(api_squad, list) and api_squad:
+                # API squads are [{"name": player_name, "position": position}, ...]
+                for player_dict in api_squad:
+                    player_name = player_dict.get("name") if isinstance(player_dict, dict) else player_dict
+                    position = player_dict.get("position", "Unknown") if isinstance(player_dict, dict) else "Unknown"
+                    
+                    # Normalize position to our roles
+                    if position in ("GK", "Goalkeeper"):
+                        role = "Goalkeeper"
+                    elif position in ("DEF", "Defender", "CB", "LB", "RB", "RWB", "LWB"):
+                        role = "Defender"
+                    elif position in ("MID", "Midfielder", "CM", "CAM", "CDM", "LM", "RM"):
+                        role = "Midfielder"
+                    elif position in ("FWD", "Forward", "ST", "CF", "LW", "RW"):
+                        role = "Forward"
+                    else:
+                        role = "Midfielder"  # Default
+                    
+                    if player_name:
+                        roster.append({"name": player_name, "role": role})
+                
+                # If we got enough players, use this roster
+                if len(roster) >= 10:
+                    self._player_rosters[team] = roster
+                    return roster
+        
+        # Fall back to hardcoded names or synthetic names
+        names = self.PLAYER_NAMES.get(team)
+        
+        if names:
+            # Use hardcoded player names from the mapping
+            for player_name in names.get("forwards", []):
+                roster.append({"name": player_name, "role": "Forward"})
+            for player_name in names.get("midfielders", []):
+                roster.append({"name": player_name, "role": "Midfielder"})
+            for player_name in names.get("defenders", []):
+                roster.append({"name": player_name, "role": "Defender"})
+            for player_name in names.get("goalkeeper", []):
+                roster.append({"name": player_name, "role": "Goalkeeper"})
+        else:
+            # Fallback: generate realistic human-like names for unknown countries
+            fallback_names = [
+                "Liam Carter", "Noah Bennett", "Mateo Silva", "Jules Laurent",
+                "Aria Hassan", "Leon Voss", "Sami Rahman", "Diego Navarro",
+                "Mikael Santos", "Nico Alvarez", "Aiden Brooks", "Theo Martin",
+            ]
+            for name in fallback_names[:4]:
+                roster.append({"name": name, "role": "Forward"})
+            for name in fallback_names[4:8]:
+                roster.append({"name": name, "role": "Midfielder"})
+            for name in fallback_names[8:11]:
+                roster.append({"name": name, "role": "Defender"})
+            roster.append({"name": fallback_names[11], "role": "Goalkeeper"})
+
+        self._player_rosters[team] = roster
+        return roster
+
+    def _choose_scorer(self, roster: list[dict]) -> str:
+        weights = [3 if p["role"] == "Forward" else 2 if p["role"] == "Midfielder" else 1 for p in roster]
+        return np.random.choice([p["name"] for p in roster], p=np.array(weights) / sum(weights))
+
+    def _choose_assist(self, roster: list[dict], scorer: str) -> str:
+        options = [p["name"] for p in roster if p["name"] != scorer]
+        if not options:
+            return ""
+        weights = [2 if "Forward" in p or "Midfielder" in p else 1 for p in options]
+        return np.random.choice(options, p=np.array(weights) / sum(weights))
+
+    def _simulate_goal_events(self, team: str, goals: int, opponent: str, round_name: str) -> list[dict]:
+        roster = self._build_team_roster(team)
+        minutes = sorted(np.random.randint(1, 91, size=max(goals, 0)).tolist())
+        events = []
+        for minute in minutes:
+            scorer = self._choose_scorer(roster)
+            assist = self._choose_assist(roster, scorer)
+            events.append({
+                "round": round_name,
+                "team": team,
+                "opponent": opponent,
+                "minute": int(minute),
+                "player": scorer,
+                "assist": assist,
+                "event": "goal",
+            })
+        return events
 
     def _simulate_goals(self, expected_goals: float) -> int:
         """
@@ -60,7 +263,7 @@ class MonteCarloSimulator:
 
         # Handle draw in knockout: go to penalties
         if knockout and goals_a == goals_b:
-            pen_winner = self._simulate_penalties(team_a, team_b, pred["win_prob"])
+            pen_winner, _ = self._simulate_penalty_shootout(team_a, team_b, pred["win_prob"])
             return pen_winner, goals_a, goals_b
 
         if goals_a > goals_b:
@@ -70,57 +273,100 @@ class MonteCarloSimulator:
         else:
             return "draw", goals_a, goals_b
 
-    def _simulate_penalties(self, team_a: str, team_b: str, win_prob_a: float) -> str:
+    def simulate_match_with_events(
+        self,
+        team_a: str,
+        team_b: str,
+        neutral: bool = True,
+        knockout: bool = False,
+        round_name: str = "Knockout"
+    ) -> dict:
         """
-        Simulate a penalty shootout.
-        Uses ELO-derived probability with added randomness (penalty luck factor).
-        """
-        # Penalties are more random — regress toward 50/50
-        pen_prob_a = 0.5 * 0.4 + win_prob_a * 0.6
-        return team_a if np.random.random() < pen_prob_a else team_b
-
-    def simulate_group(self, teams: list, neutral: bool = True) -> dict:
-        """
-        Simulate a full group stage (round-robin) for a list of teams.
+        Simulate a single match and return detailed event data.
 
         Returns:
-            dict of {team: {points, gf, ga, gd, wins, draws, losses}}
+            {winner, goals_a, goals_b, events, penalty_shootout}
         """
-        standings = {
-            team: {"points": 0, "gf": 0, "ga": 0, "gd": 0,
-                   "wins": 0, "draws": 0, "losses": 0}
-            for team in teams
+        pred = self.elo.predict_match(team_a, team_b, neutral)
+        goals_a = self._simulate_goals(pred["expected_goals_a"])
+        goals_b = self._simulate_goals(pred["expected_goals_b"])
+
+        events = []
+        events.extend(self._simulate_goal_events(team_a, goals_a, team_b, round_name))
+        events.extend(self._simulate_goal_events(team_b, goals_b, team_a, round_name))
+
+        penalty_shootout = []
+        winner = "draw"
+        if knockout and goals_a == goals_b:
+            winner, penalty_shootout = self._simulate_penalty_shootout(team_a, team_b, pred["win_prob"])
+            events.extend(penalty_shootout)
+        elif goals_a > goals_b:
+            winner = team_a
+        elif goals_b > goals_a:
+            winner = team_b
+
+        return {
+            "winner": winner,
+            "goals_a": goals_a,
+            "goals_b": goals_b,
+            "events": events,
+            "penalty_shootout": penalty_shootout,
         }
 
-        # Round-robin: every team plays every other team once
-        for i in range(len(teams)):
-            for j in range(i + 1, len(teams)):
-                team_a, team_b = teams[i], teams[j]
-                result, ga, gb = self.simulate_match(team_a, team_b, neutral=neutral)
+    def _simulate_penalty_shootout(self, team_a: str, team_b: str, win_prob_a: float) -> tuple[str, list[dict]]:
+        roster_a = self._build_team_roster(team_a)
+        roster_b = self._build_team_roster(team_b)
+        kick_order = []
+        results = []
+        score_a = score_b = 0
 
-                standings[team_a]["gf"] += ga
-                standings[team_a]["ga"] += gb
-                standings[team_b]["gf"] += gb
-                standings[team_b]["ga"] += ga
+        prob_a = max(0.3, min(0.85, 0.55 + (win_prob_a - 0.5) * 0.2))
+        prob_b = max(0.3, min(0.85, 0.55 - (win_prob_a - 0.5) * 0.2))
 
-                if result == team_a:
-                    standings[team_a]["points"] += 3
-                    standings[team_a]["wins"] += 1
-                    standings[team_b]["losses"] += 1
-                elif result == team_b:
-                    standings[team_b]["points"] += 3
-                    standings[team_b]["wins"] += 1
-                    standings[team_a]["losses"] += 1
+        takers_a = [p["name"] for p in roster_a if p["role"] in ("Forward", "Midfielder")][:5]
+        takers_b = [p["name"] for p in roster_b if p["role"] in ("Forward", "Midfielder")][:5]
+        keepers = {
+            team_a: next(p["name"] for p in roster_a if p["role"] == "Goalkeeper"),
+            team_b: next(p["name"] for p in roster_b if p["role"] == "Goalkeeper"),
+        }
+
+        max_rounds = 5
+        for i in range(max_rounds):
+            kick_order.append((team_a, takers_a[i] if i < len(takers_a) else f"{team_a} Penalty {i+1}"))
+            kick_order.append((team_b, takers_b[i] if i < len(takers_b) else f"{team_b} Penalty {i+1}"))
+
+        for idx, (team, player) in enumerate(kick_order, start=1):
+            prob = prob_a if team == team_a else prob_b
+            scored = np.random.random() < prob
+            if scored:
+                if team == team_a:
+                    score_a += 1
                 else:
-                    standings[team_a]["points"] += 1
-                    standings[team_b]["points"] += 1
-                    standings[team_a]["draws"] += 1
-                    standings[team_b]["draws"] += 1
+                    score_b += 1
+                result = "scored"
+            else:
+                result = np.random.choice(["saved", "missed"], p=[0.6, 0.4])
 
-        for team in standings:
-            standings[team]["gd"] = standings[team]["gf"] - standings[team]["ga"]
+            results.append({
+                "kick": idx,
+                "team": team,
+                "player": player,
+                "keeper": keepers[team_b if team == team_a else team_a],
+                "result": result,
+                "score": f"{score_a}-{score_b}",
+            })
 
-        return standings
+            if idx >= 10:
+                if score_a != score_b:
+                    break
+            else:
+                remaining_a = max_rounds - (idx // 2 + (1 if idx % 2 == 0 and team == team_a else 0))
+                remaining_b = max_rounds - ((idx + 1) // 2)
+                if score_a > score_b + remaining_b or score_b > score_a + remaining_a:
+                    break
+
+        winner = team_a if score_a > score_b else team_b
+        return winner, results
 
     def get_group_qualifiers(self, standings: dict, n_advance: int = 2) -> list:
         """
