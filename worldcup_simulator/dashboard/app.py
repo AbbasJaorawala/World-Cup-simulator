@@ -34,10 +34,22 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1.4rem; }
+    .block-container { padding-top: 1.4rem; padding-left: 1rem; padding-right: 1rem; }
     [data-testid="stMetricValue"] { font-size: 1.65rem; }
     div[data-testid="stDataFrame"] { border: 1px solid rgba(49, 51, 63, .12); }
     .small-note { color: #5f6368; font-size: .88rem; }
+
+    @media (max-width: 768px) {
+        .block-container { padding-left: 0.75rem; padding-right: 0.75rem; }
+        .stButton>button, .stButton>div>button { width: 100% !important; }
+        .stSidebar .css-1d391kg, .css-1d391kg { width: 100% !important; }
+        [data-testid="stMetric"]:not(.stMetric) { min-width: 0 !important; }
+        [data-testid="stMetricValue"] { font-size: 1.35rem; }
+        .css-1e5imcs { flex-direction: column !important; }
+        .css-1n76uvr { width: 100% !important; }
+        .css-yk16xz { width: 100% !important; }
+        .stTextInput>div>div>input, .stNumberInput>div>div>input, .stSelectbox>div>div>div { width: 100% !important; }
+    }
     </style>
     """,
     unsafe_allow_html=True,
