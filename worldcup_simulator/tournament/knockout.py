@@ -290,30 +290,3 @@ class KnockoutStage:
         lines.append(f"  🥈 Runner-up : {bracket_result.get('runner_up', 'N/A')}")
         lines.append(f"  🥉 Third     : {bracket_result.get('third_place_team', 'N/A')}")
         return "\n".join(lines)
-
-
-# ── Quick Test ─────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    from simulator.elo import ELOEngine
-    from simulator.monte_carlo import MonteCarloSimulator
-    from tournament.groups import GroupStage
-
-   
-    elo = ELOEngine(ratings)
-    mc = MonteCarloSimulator(elo, n_simulations=1)
-
-    # Full pipeline: simulate groups (with best-thirds) → build bracket → knockout
-    gs = GroupStage(groups, elo, mc)
-    group_results = gs.simulate_all_groups(n_advance=2, n_best_thirds=8)
-
-    print(f"24 direct qualifiers + {len(group_results['best_thirds'])} best thirds "
-          f"= {len(group_results['all_qualified'])} teams in knockout\n")
-
-    ks = KnockoutStage(elo, mc)
-    bracket_order = ks.build_bracket(
-        group_results["qualified"],
-        best_thirds=group_results["best_thirds"]
-    )
-    result = ks.simulate_bracket(bracket_order)
-    print(ks.format_bracket(result))

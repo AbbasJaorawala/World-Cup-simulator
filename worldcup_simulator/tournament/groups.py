@@ -278,26 +278,3 @@ class GroupStage:
             rows += (f"  {team:<15} {s['played']:>2} {s['wins']:>2} {s['draws']:>2} "
                      f"{s['losses']:>2} {s['gf']:>3} {s['ga']:>3} {s['gd']:>+4} {s['points']:>4}{qualifier}\n")
         return header + rows
-
-
-# ── Quick Test ─────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    from simulator.elo import ELOEngine
-    from simulator.monte_carlo import MonteCarloSimulator
-
-
-
-    elo = ELOEngine(ratings)
-    mc = MonteCarloSimulator(elo, n_simulations=1)
-    gs = GroupStage(groups, elo, mc)
-
-    print("Simulating Group A...")
-    table_a = gs.simulate_group("A")
-    print(gs.format_standings_table("A", table_a))
-
-    print("Simulating All Groups...")
-    results = gs.simulate_all_groups()
-    print("\nQualified Teams:")
-    for grp, teams in results["qualified"].items():
-        print(f"  Group {grp}: {teams[0]} (1st), {teams[1]} (2nd)")
